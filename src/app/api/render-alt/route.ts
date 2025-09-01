@@ -1,9 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase";
+import { spawn } from "child_process";
+import path from "path";
+import fs from "fs";
+
+async function runPython(imagePath: string, styleName: string, outputPath: string) {
+  return new Promise<{ caption: string; prompt: string; output_path: string; error?: string }>((resolve) => {
+    const scriptPath = path.resolve(process.cwd(), "src/python/room_styler.py");
+    const py = spawn("python", [scriptPath, imagePath, styleName, outputPath]);
+    let stdout = "";
+    let stderr = "";
+
+    py.stdout.on("data", (chunk) => (stdout += chunk));
+    py.stderr.on("data", (chunk) => (stderr += chunk));
+    py.on("error", (err) => {
+      resolve({ caption: "", prompt: "", output_path: "", error: "Python process error: " + err.message });
+    });
+    py.on("close", () => {
+      // Find the last valid JSON line in stdout
+      const lines = stdout.trim().split("\n");
+      let lastJson = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          lastJson = JSON.parse(lines[i]);
+          break;
+        } catch {}
+      }
+      if (lastJson) {
+        resolve(lastJson);
+      } else {
+        resolve({ caption: "", prompt: "", output_path: "", error: "Python script failed: " + stdout + "\n" + stderr });
+      }
+    });
+  });
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId, projectId, styleId, beforePath } = await request.json();
+    const body = await request.json();
+    const { userId, projectId, styleId, beforePath } = body;
 
     if (!userId || !projectId || !styleId || !beforePath) {
       return NextResponse.json(
@@ -65,107 +100,97 @@ export async function POST(request: NextRequest) {
       .eq("id", styleId)
       .single();
 
-    // Prepare prompt based on style
-    const stylePrompts: { [key: string]: string } = {
-      Industrial:
-        "Transform this interior into an Industrial living space with exposed brick walls, metal beams, concrete floors, warm Edison bulbs, raw textures, neutral color palette",
-      Minimalist:
-        "Transform this interior into a Minimalist living space with clean lines, neutral palette, minimal furnishings, light woods, clutter-free design, muted tones",
-      Rustic:
-        "Transform this interior into a Rustic living space with natural wood beams, warm wooden textures, woven fabrics, cozy textiles, earthy tones",
-      Scandinavian:
-        "Transform this interior into a Scandinavian living space with bright, airy feel, light wood, cozy textiles, functional minimal pieces, white walls, pastel accents",
-      Bohemian:
-        "Transform this interior into a Bohemian living space with layered textiles, colorful patterns, lots of plants, rattan furniture, eclectic mix",
-      Modern:
-        "Transform this interior into a Modern living space with sleek furniture, glass and metal, bold accent pieces, open layouts, polished floors",
-    };
+    // Download the before image from Supabase Storage
+    const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
+      .from("images")
+      .createSignedUrl(beforePath, 60);
 
-    const prompt =
-      stylePrompts[styleData?.name || "Modern"] || stylePrompts["Modern"];
-
-    // Generate image using the most reliable method
-    let imageBuffer: ArrayBuffer;
-
-    try {
-      // Try the free fallback service first (Pollinations AI)
-      console.log("Using Pollinations AI for image generation...");
-
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-        prompt
-      )}?width=512&height=512&model=flux&enhance=true`;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-
-      const response = await fetch(pollinationsUrl, {
-        method: "GET",
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        imageBuffer = await response.arrayBuffer();
-        console.log("Successfully generated image with Pollinations AI");
-      } else {
-        throw new Error(`Pollinations API returned status ${response.status}`);
-      }
-    } catch (error: any) {
-      console.error("Image generation failed:", error);
-
-      // Refund credits on failure
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      // Refund credits
       await supabaseAdmin
         .from("users")
         .update({ credits: userData.credits })
         .eq("id", userId);
-
       return NextResponse.json(
-        {
-          error: "AI image generation failed. Please try again.",
-          details: error.message,
-        },
-        { status: 503 }
+        { error: "Could not get signed URL for before image" },
+        { status: 500 }
       );
     }
 
-    // Check if we got a valid image
-    if (!imageBuffer || imageBuffer.byteLength === 0) {
+    // Save image to temp file
+    const tmpDir = path.resolve(process.cwd(), "tmp");
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir);
+    }
+    const tempImagePath = path.join(tmpDir, `${Date.now()}_room.png`);
+    const tempOutputPath = path.join(tmpDir, `${Date.now()}_styled.png`);
+    const beforeImageResponse = await fetch(signedUrlData.signedUrl);
+    const beforeImageBuffer = await beforeImageResponse.arrayBuffer();
+    fs.writeFileSync(tempImagePath, Buffer.from(beforeImageBuffer));
+
+    // Get style name from DB
+    const styleName = styleData?.name || "Modern";
+
+    // Call Python script (BLIP + Stable Diffusion)
+    const pyResult = await runPython(tempImagePath, styleName, tempOutputPath);
+
+    if (pyResult.error) {
+      console.error("Python script error:", pyResult.error);
+
       // Refund credits
       await supabaseAdmin
         .from("users")
         .update({ credits: userData.credits })
         .eq("id", userId);
 
+      // Clean up temp files if they exist
+      try {
+        if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+        if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
+      } catch (cleanupError) {
+        console.warn("Failed to clean up temp files:", cleanupError);
+      }
+
       return NextResponse.json(
-        { error: "Generated image is empty" },
-        { status: 500 }
+        { error: "Image rendering failed", details: pyResult.error },
+        { status: 503 }
       );
     }
 
-    // Upload the generated image to Supabase Storage
+    // Upload generated image to Supabase Storage
     const afterPath = `renders/${userId}/${projectId}/${Date.now()}_after.png`;
+    const styledImageBuffer = fs.readFileSync(tempOutputPath);
     const { error: uploadError } = await supabaseAdmin.storage
       .from("images")
-      .upload(afterPath, imageBuffer, {
+      .upload(afterPath, styledImageBuffer, {
         contentType: "image/png",
         upsert: false,
       });
 
-    if (uploadError) {
-      console.error("Upload error:", uploadError);
+    // Clean up temp files after upload
+    try {
+      if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+      if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
+    } catch (cleanupError) {
+      console.warn("Failed to clean up temp files:", cleanupError);
+    }
 
-      // Refund credits on upload failure
+    if (uploadError) {
       await supabaseAdmin
         .from("users")
         .update({ credits: userData.credits })
         .eq("id", userId);
-
       return NextResponse.json(
         { error: "Failed to save generated image" },
         { status: 500 }
       );
     }
+
+    const { data: publicUrlData } = supabaseAdmin.storage
+      .from("images")
+      .getPublicUrl(afterPath);
+
+    const publicUrl = publicUrlData?.publicUrl;
 
     // Create project image record
     const { data: imageRecord, error: recordError } = await supabaseAdmin
@@ -187,9 +212,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       afterPath,
+      publicUrl,
       imageRecord,
       creditsRemaining: userData.credits - 5,
-      message: "Image generated successfully with Pollinations AI",
+      message: "Image generated successfully with BLIP & Stable Diffusion",
+      caption: pyResult.caption,
+      prompt: pyResult.prompt,
     });
   } catch (error) {
     console.error("Render API error:", error);

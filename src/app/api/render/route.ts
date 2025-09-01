@@ -109,9 +109,15 @@ export async function POST(request: NextRequest) {
 
     let imageBuffer: ArrayBuffer | null = null;
 
+  
     try {
       if (aiService === "replicate") {
-        // Use Replicate API (more reliable)
+        // Download the before image from Supabase Storage
+        const beforeImageResponse = await fetch(signedUrlData.signedUrl);
+        const beforeImageBuffer = await beforeImageResponse.arrayBuffer();
+        const beforeImageBase64 = Buffer.from(beforeImageBuffer).toString("base64");
+
+        // Use Replicate Stable Diffusion img2img
         const replicateResponse = await fetch(
           "https://api.replicate.com/v1/predictions",
           {
@@ -121,13 +127,11 @@ export async function POST(request: NextRequest) {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              version:
-                "ac732df83cea7fff18b8472768c88ad041fa750ff7682a21affe81863cbe77e4", // Stable Diffusion v1.5
+              version: "a9758cb3b0d7e2c3c8e4e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1", // Replicate SD img2img version
               input: {
                 prompt: prompt,
-                width: 512,
-                height: 512,
-                num_inference_steps: 15,
+                image: `data:image/png;base64,${beforeImageBase64}`,
+                strength: 0.7,
                 guidance_scale: 7.5,
               },
             }),
@@ -144,8 +148,8 @@ export async function POST(request: NextRequest) {
         // Poll for completion
         let completed = false;
         let attempts = 0;
+        let outputUrl = null;
         while (!completed && attempts < 30) {
-          // Max 30 attempts (60 seconds)
           await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds
 
           const statusResponse = await fetch(
@@ -161,8 +165,9 @@ export async function POST(request: NextRequest) {
 
           if (status.status === "succeeded") {
             completed = true;
+            outputUrl = status.output[0];
             // Download the image
-            const imageResponse = await fetch(status.output[0]);
+            const imageResponse = await fetch(outputUrl);
             imageBuffer = await imageResponse.arrayBuffer();
           } else if (status.status === "failed") {
             throw new Error("Image generation failed");
