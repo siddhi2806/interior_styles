@@ -35,8 +35,9 @@ export function RenderPanel({ project, styles, onSuccess }: RenderPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const getImageUrl = (afterPath: string) => {
-  return supabase.storage.from("images").getPublicUrl(afterPath).data.publicUrl;
-};
+    return supabase.storage.from("images").getPublicUrl(afterPath).data
+      .publicUrl;
+  };
 
   useEffect(() => {
     if (panelRef.current) {
@@ -64,105 +65,112 @@ export function RenderPanel({ project, styles, onSuccess }: RenderPanelProps) {
     maxSize: 10 * 1024 * 1024, // 10MB
   });
 
-const uploadImage = async (file: File): Promise<string> => {
-  const fileExt = file.name.split(".").pop();
-  const fileName = `${user?.id}/${project.id}/${Date.now()}.${fileExt}`;
+  const uploadImage = async (file: File): Promise<string> => {
+    const fileExt = file.name.split(".").pop();
+    const fileName = `${user?.id}/${project.id}/${Date.now()}.${fileExt}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from("images")
-    .upload(fileName, file, {
-      cacheControl: "3600",
-      upsert: false,
-    });
+    const { error: uploadError } = await supabase.storage
+      .from("images")
+      .upload(fileName, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
 
-  if (uploadError) {
-    setError("Upload failed: " + uploadError.message);
-    setUploading(false);
-    throw uploadError;
-  }
-  return fileName;
-};
+    if (uploadError) {
+      setError("Upload failed: " + uploadError.message);
+      setUploading(false);
+      throw uploadError;
+    }
+    return fileName;
+  };
 
   const handleRender = async () => {
-  if (!selectedFile || !selectedStyle || !user || !profile) {
-    setError("Please select an image and style");
-    return;
-  }
-
-  if (profile.credits < 5) {
-    setError("Insufficient credits. You need at least 5 credits to render.");
-    return;
-  }
-
-  setError(null);
-  setUploading(true);
-  setRenderProgress(0);
-
-  try {
-    // Upload the image first
-    const imagePath = await uploadImage(selectedFile);
-    setUploading(false);
-    setRendering(true);
-    setEstimatedTime(15);
-
-    // Start progress animation
-    const progressInterval = setInterval(() => {
-      setRenderProgress((prev) => {
-        if (prev >= 90) return prev;
-        return prev + Math.random() * 10;
-      });
-    }, 1000);
-
-    // Call the render API with required fields
-    const startTime = Date.now();
-    const response = await fetch("/api/render-alt", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        userId: user.id,
-        projectId: project.id,
-        styleId: selectedStyle,
-        beforePath: imagePath,
-      }),
-    });
-
-    clearInterval(progressInterval);
-    setRenderProgress(100);
-
-    const result = await response.json();
-    console.log("Render API result:", result);
-
-    if (!response.ok) {
-      setError(result.error || "Rendering failed");
+    if (!selectedFile || !selectedStyle || !user || !profile) {
+      setError("Please select an image and style");
       return;
     }
 
-    const actualTime = Math.round((Date.now() - startTime) / 1000);
-    console.log(`Render completed in ${actualTime} seconds`);
+    if (profile.credits < 5) {
+      setError("Insufficient credits. You need at least 5 credits to render.");
+      return;
+    }
 
-    setRenderResult({
-      publicUrl: result.publicUrl,
-      creditsRemaining: result.creditsRemaining,
-    });
-    await refreshProfile();
-    onSuccess();
-
-    gsap.fromTo(
-      ".success-message",
-      { scale: 0, opacity: 0 },
-      { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(1.7)" }
-    );
-  } catch (error: any) {
-    console.error("Render error:", error);
-    setError(error.message || "Failed to render image");
-  } finally {
-    setUploading(false);
-    setRendering(false);
+    setError(null);
+    setUploading(true);
     setRenderProgress(0);
-  }
-};
+
+    try {
+      // Upload the image first
+      const imagePath = await uploadImage(selectedFile);
+      setUploading(false);
+      setRendering(true);
+      setEstimatedTime(300); // 5 minutes for local AI
+
+      // Start progress animation
+      const progressInterval = setInterval(() => {
+        setRenderProgress((prev) => {
+          if (prev >= 90) return prev;
+          return prev + Math.random() * 10;
+        });
+      }, 1000);
+
+      // Call the render API with required fields
+      const startTime = Date.now();
+      const response = await fetch("/api/render-local", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          projectId: project.id,
+          styleId: selectedStyle,
+          beforePath: imagePath,
+        }),
+      });
+
+      clearInterval(progressInterval);
+      setRenderProgress(100);
+
+      const result = await response.json();
+      console.log("Render API result:", result);
+
+      if (!response.ok) {
+        setError(result.error || "Rendering failed");
+        return;
+      }
+
+      const actualTime = Math.round((Date.now() - startTime) / 1000);
+      console.log(`Render completed in ${actualTime} seconds`);
+
+      // Generate public URL from the afterPath
+      const publicUrl = supabase.storage
+        .from("images")
+        .getPublicUrl(result.afterPath).data.publicUrl;
+
+      setRenderResult({
+        publicUrl: publicUrl,
+        creditsRemaining: result.creditsRemaining,
+        caption: result.caption,
+        prompt: result.prompt,
+      });
+      await refreshProfile();
+      onSuccess();
+
+      gsap.fromTo(
+        ".success-message",
+        { scale: 0, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(1.7)" }
+      );
+    } catch (error: any) {
+      console.error("Render error:", error);
+      setError(error.message || "Failed to render image");
+    } finally {
+      setUploading(false);
+      setRendering(false);
+      setRenderProgress(0);
+    }
+  };
 
   const resetPanel = () => {
     setSelectedFile(null);
@@ -215,13 +223,13 @@ const uploadImage = async (file: File): Promise<string> => {
             {selectedStyleData?.name} style.
           </p>
           {renderResult?.publicUrl && (
-  <img
-    src={renderResult.publicUrl}
-    alt="AI Styled Room"
-    className="mx-auto rounded-lg shadow-lg border mt-4"
-    style={{ maxWidth: "100%", maxHeight: 400 }}
-  />
-)}
+            <img
+              src={renderResult.publicUrl}
+              alt="AI Styled Room"
+              className="mx-auto rounded-lg shadow-lg border mt-4"
+              style={{ maxWidth: "100%", maxHeight: 400 }}
+            />
+          )}
           <p className="text-sm text-gray-500">
             Credits remaining: {renderResult.creditsRemaining}
           </p>
@@ -307,7 +315,7 @@ const uploadImage = async (file: File): Promise<string> => {
               <p>Cost: 5 credits per render</p>
               <p>Your credits: {profile?.credits || 0}</p>
               <p className="text-xs text-indigo-600 mt-1">
-                ⚡ Processing time: ~15 seconds
+                ⚡ Processing time: ~5 minutes (Local AI)
               </p>
             </div>
 

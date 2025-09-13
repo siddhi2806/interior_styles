@@ -1,0 +1,17 @@
+# Lightweight AI Dependencies for Pollinations AI
+transformers>=4.30.0
+torch>=2.7.0
+
+# Image Processing
+Pillow>=9.0.0
+
+# HTTP Requests for Pollinations AI
+requests>=2.25.0
+
+# Optional: For better performance with Hugging Face Hub (for image captioning)
+huggingface_hub>=0.15.0
+
+# Note: Removed heavy dependencies:
+# - diffusers (no longer needed for Pollinations AI)
+# - torchvision, torchaudio (not needed for our use case)
+# - accelerate (not needed for API-based generation)

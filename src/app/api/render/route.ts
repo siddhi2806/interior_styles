@@ -86,17 +86,17 @@ export async function POST(request: NextRequest) {
     // Prepare prompt based on style
     const stylePrompts: { [key: string]: string } = {
       Industrial:
-        "Transform this interior photo into an Industrial living space. Keep furniture positions and architecture unchanged. Emphasize: exposed brick walls, metal beams, concrete floors, warm Edison bulbs, raw textures, neutral color palette. Maintain realistic lighting and natural textures.",
+        "Transform this interior room photo into a sophisticated Industrial loft style. Emphasize exposed brick walls, raw concrete floors, and visible black metal ductwork on the ceiling. Incorporate furniture made of reclaimed wood and dark, matte steel. Lighting should come from Edison bulb pendants and oversized, black-framed factory-style windows that let in a lot of natural light. The color palette is charcoal, deep brown, and warm grays.",
       Minimalist:
-        "Transform this interior photo into a Minimalist living space. Keep furniture positions and architecture unchanged. Emphasize: clean lines, neutral palette, minimal furnishings, light woods, clutter-free, muted tones. Maintain realistic lighting and natural textures.",
+        "Transform this interior room photo into a serene Minimalist style, focusing on 'less is more.' Emphasize clean, uninterrupted lines and a completely clutter-free space. Use a monochromatic neutral palette of soft whites, light grays, and beige. Introduce subtle texture with high-quality materials like light oak wood, linen curtains, and a soft wool rug. The space must be filled with abundant, soft natural light. All furniture should be functional with simple, elegant geometric forms. The final image must feel calm, airy, and impeccably clean.",
       Rustic:
-        "Transform this interior photo into a Rustic living space. Keep furniture positions and architecture unchanged. Emphasize: natural wood beams, warm wooden textures, woven fabrics, cozy textiles, earthy tones. Maintain realistic lighting and natural textures.",
+        "Transform this interior room photo into a cozy modern Rustic aesthetic, like a chic mountain cabin. Use heavy, warm-toned wood beams on the ceiling and wide-plank hardwood floors. Feature a natural fieldstone accent wall or fireplace. Furnish with comfortable, oversized pieces upholstered in earthy textiles like genuine leather, wool, and flannel. The lighting should be warm and layered, creating a welcoming glow. Ensure all objects look solid, authentic, and handcrafted.",
       Scandinavian:
-        "Transform this interior photo into a Scandinavian living space. Keep furniture positions and architecture unchanged. Emphasize: bright, airy, light wood, cozy textiles, functional minimal pieces, white walls, pastel accents. Maintain realistic lighting and natural textures.",
+        "Transform this interior room photo into a Scandinavian (Scandi) design. The space must be bright, airy, and flooded with natural light. Use a palette of crisp white walls with soft gray and pastel accents. Flooring and furniture are made of light-colored woods like pale oak or ash. Incorporate cozy textures with sheepskin throws, wool blankets, and plush rugs. Add several live, green potted plants for a touch of nature. The final look should embody 'hygge'—a perfect balance of simple functionality and inviting warmth.",
       Bohemian:
-        "Transform this interior photo into a Bohemian living space. Keep furniture positions and architecture unchanged. Emphasize: layered textiles, colorful patterns, lots of plants, rattan furniture, eclectic mix. Maintain realistic lighting and natural textures.",
+        "Transform this interior room photo into a vibrant Bohemian (Boho) sanctuary. The style must be eclectic, layered, and relaxed. Use a base of warm, earthy tones and layer on rich, colorful textiles like a Moroccan rug, macrame wall hangings, and patterned throw pillows. Fill the room with an abundance of thriving houseplants, like a fiddle leaf fig and hanging pothos. Furniture should be a mix of vintage finds and natural rattan pieces. The atmosphere should be cozy with soft, ambient light from lanterns or string lights.",
       Modern:
-        "Transform this interior photo into a Modern living space. Keep furniture positions and architecture unchanged. Emphasize: sleek furniture, glass and metal, bold accent pieces, open layouts, polished floors. Maintain realistic lighting and natural textures.",
+        "Transform this interior room photo into a sleek Mid-Century Modern style. Furniture must have clean lines, organic curves, and a low profile, crafted from materials like warm walnut wood, polished chrome, and glass. Use a sophisticated color palette with a neutral base and bold accent colors like teal or burnt orange. Surfaces should be smooth and uncluttered. Include a single piece of large-scale abstract art as a focal point and ensure a strong connection to the outdoors with large windows. The result should feel intentional, sophisticated, and timeless.",
     };
 
     const prompt =
@@ -109,13 +109,13 @@ export async function POST(request: NextRequest) {
 
     let imageBuffer: ArrayBuffer | null = null;
 
-  
     try {
       if (aiService === "replicate") {
         // Download the before image from Supabase Storage
         const beforeImageResponse = await fetch(signedUrlData.signedUrl);
         const beforeImageBuffer = await beforeImageResponse.arrayBuffer();
-        const beforeImageBase64 = Buffer.from(beforeImageBuffer).toString("base64");
+        const beforeImageBase64 =
+          Buffer.from(beforeImageBuffer).toString("base64");
 
         // Use Replicate Stable Diffusion img2img
         const replicateResponse = await fetch(
@@ -127,7 +127,8 @@ export async function POST(request: NextRequest) {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              version: "a9758cb3b0d7e2c3c8e4e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1", // Replicate SD img2img version
+              version:
+                "a9758cb3b0d7e2c3c8e4e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1c8e2e1", // Replicate SD img2img version
               input: {
                 prompt: prompt,
                 image: `data:image/png;base64,${beforeImageBase64}`,
